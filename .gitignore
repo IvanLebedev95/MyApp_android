@@ -1,0 +1,39 @@
+# ============================
+# Android / Gradle
+# ============================
+.gradle/
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+*.iml
+.idea/
+
+# ============================
+# Артефакты сборки
+# ============================
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# ============================
+# Секреты (ОЧЕНЬ ВАЖНО!)
+# ============================
+google-services.json
+firebase-service-account.json
+*.jks
+*.keystore
+keystore.properties
+*.env
+.env.*
+
+# ============================
+# Логи и системные
+# ============================
+*.log
+.DS_Store
+Thumbs.db
