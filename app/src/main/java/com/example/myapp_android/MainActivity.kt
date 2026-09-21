@@ -1,16 +1,27 @@
 package com.example.myapp_android
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.launch
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -61,18 +72,22 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessageScreen() {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
     var messageText by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf("") }
     var messages by remember { mutableStateOf<List<Message>>(emptyList()) }
+    var isRefreshing by remember { mutableStateOf(false) } // ✅ для PullToRefresh
     val scope = rememberCoroutineScope()
 
-    fun loadMessages() {
-        scope.launch {
-            try {
-                messages = RetrofitClient.api.getMessages()
-            } catch (e: Exception) {
-                statusMessage = "Ошибка загрузки: ${e.message}"
-            }
+    // ✅ Общая функция загрузки, используется и при старте, и при возврате, и при pull-to-refresh
+    suspend fun refreshMessages() {
+        try {
+            messages = RetrofitClient.api.getMessages()
+            statusMessage = ""
+        } catch (e: Exception) {
+            statusMessage = "Ошибка загрузки: ${e.message}"
         }
     }
 
@@ -91,11 +106,36 @@ fun MessageScreen() {
 
     // Первая загрузка списка
     LaunchedEffect(Unit) {
-        loadMessages()
+        refreshMessages()
     }
 
-    // WebSocket на время жизни экрана
-    DisposableEffect(Unit) {
+    // ✅ Отслеживание жизненного цикла: при возврате в приложение — реконнект + обновление
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    // Приложение вернулось на экран — обновляем список и переподключаем WebSocket
+                    scope.launch {
+                        refreshMessages()
+                        WebSocketClient.connect { newMessage ->
+                            if (messages.none { it.id == newMessage.id }) {
+                                messages = listOf(newMessage) + messages
+                            }
+                        }
+                    }
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    // Приложение уходит в фон — можно не закрывать, но лучше закрыть,
+                    // чтобы не висело мёртвое соединение
+                    WebSocketClient.disconnect()
+                }
+                else -> Unit
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        // Первое подключение WebSocket при показе экрана
         WebSocketClient.connect { newMessage ->
             scope.launch {
                 if (messages.none { it.id == newMessage.id }) {
@@ -103,12 +143,13 @@ fun MessageScreen() {
                 }
             }
         }
+
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             WebSocketClient.disconnect()
         }
     }
 
-    // Scaffold сам добавляет системные отступы (статус-бар, навигация)
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Мои сообщения") })
@@ -120,7 +161,6 @@ fun MessageScreen() {
                 .fillMaxSize()
                 .padding(16.dp)
         ) {
-            // Поле ввода + кнопка
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -137,7 +177,6 @@ fun MessageScreen() {
                 }
             }
 
-            // Статус операции
             if (statusMessage.isNotEmpty()) {
                 Text(
                     text = statusMessage,
@@ -148,24 +187,36 @@ fun MessageScreen() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Список сообщений
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(messages) { message ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = message.text,
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Text(
-                                text = message.createdAt,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+            // ✅ Pull-to-refresh оборачивает LazyColumn
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    scope.launch {
+                        isRefreshing = true
+                        refreshMessages()
+                        isRefreshing = false
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(messages) { message ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = message.text,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Text(
+                                    text = message.createdAt,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
