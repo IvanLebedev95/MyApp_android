@@ -40,6 +40,9 @@ interface ApiService {
 
     @POST("api/messages")
     suspend fun sendMessage(@Body request: SendMessageRequest)
+
+    @POST("api/register-token")
+    suspend fun registerToken(@Body body: Map<String, String>)
 }
 
 // 3. Retrofit
@@ -78,10 +81,44 @@ fun MessageScreen() {
     var messageText by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf("") }
     var messages by remember { mutableStateOf<List<Message>>(emptyList()) }
-    var isRefreshing by remember { mutableStateOf(false) } // ✅ для PullToRefresh
+    var isRefreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // ✅ Общая функция загрузки, используется и при старте, и при возврате, и при pull-to-refresh
+    // ✅ Состояние: выдано ли разрешение на уведомления.
+    // null = ещё не спрашивали, true = выдано, false = отказано.
+    var notificationPermissionGranted by remember {
+        mutableStateOf<Boolean?>(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true // до Android 13 разрешение не требуется
+            }
+        )
+    }
+
+    // ✅ Лаунчер запроса разрешения
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        notificationPermissionGranted = isGranted
+        if (!isGranted) {
+            statusMessage = "Уведомления отключены. Включите в настройках приложения."
+        }
+    }
+
+    // ✅ Запрашиваем разрешение один раз при появлении экрана (только Android 13+)
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            notificationPermissionGranted != true
+        ) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // Общая функция загрузки
     suspend fun refreshMessages() {
         try {
             messages = RetrofitClient.api.getMessages()
@@ -109,12 +146,11 @@ fun MessageScreen() {
         refreshMessages()
     }
 
-    // ✅ Отслеживание жизненного цикла: при возврате в приложение — реконнект + обновление
+    // Отслеживание жизненного цикла: при возврате в приложение — реконнект + обновление
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
-                    // Приложение вернулось на экран — обновляем список и переподключаем WebSocket
                     scope.launch {
                         refreshMessages()
                         WebSocketClient.connect { newMessage ->
@@ -125,8 +161,6 @@ fun MessageScreen() {
                     }
                 }
                 Lifecycle.Event.ON_STOP -> {
-                    // Приложение уходит в фон — можно не закрывать, но лучше закрыть,
-                    // чтобы не висело мёртвое соединение
                     WebSocketClient.disconnect()
                 }
                 else -> Unit
@@ -187,7 +221,6 @@ fun MessageScreen() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ✅ Pull-to-refresh оборачивает LazyColumn
             PullToRefreshBox(
                 isRefreshing = isRefreshing,
                 onRefresh = {
