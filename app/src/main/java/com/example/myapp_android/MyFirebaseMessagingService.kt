@@ -19,21 +19,27 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
-        Log.d(TAG, "Получено FCM-сообщение: ${remoteMessage.data}")
-
+        Log.d(TAG, "FCM-сообщение: ${remoteMessage.data}")
         // Если приложение на переднем плане, система не покажет уведомление автоматически.
-        // Здесь можно показать его вручную через NotificationHelper (если он у вас есть).
-        // Сейчас достаточно просто залогировать.
+        // Можно добавить показ через NotificationManager, если понадобится.
     }
 
     private fun sendTokenToServer(token: String) {
-        // Запускаем корутину в фоновом потоке, потому что registerToken — suspend-функция
+        // Получаем JWT-токен пользователя. Если его нет — сервер не примет токен.
+        val jwt = TokenStorage.get() ?: run {
+            Log.w(TAG, "JWT-токен не найден, FCM-токен не отправлен")
+            return
+        }
+
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                RetrofitClient.api.registerToken(mapOf("token" to token))
-                Log.d(TAG, "Токен успешно отправлен на сервер")
+                RetrofitClient.api.registerToken(
+                    auth = "Bearer $jwt",
+                    body = mapOf("token" to token)
+                )
+                Log.d(TAG, "FCM-токен отправлен на сервер")
             } catch (e: Exception) {
-                Log.e(TAG, "Ошибка отправки токена: ${e.message}")
+                Log.e(TAG, "Ошибка отправки FCM-токена: ${e.message}")
             }
         }
     }
