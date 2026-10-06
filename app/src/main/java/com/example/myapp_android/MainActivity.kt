@@ -271,7 +271,7 @@ fun MessageScreen(token: String, onLogout: () -> Unit) {
                         Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(message.text, style = MaterialTheme.typography.bodyLarge)
-                                Text(message.createdAt, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(MessageTimeFormatter.formatLocal(message.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
